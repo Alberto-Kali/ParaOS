@@ -5,7 +5,6 @@ void outw(uint16 port, uint16 val)
     asm __volatile__ ("outw %%ax, %%dx" : : "d" (port), "a" (val));
 }
 
-
 void outl(uint16 port, uint32 val)
 {
     asm volatile("outl %0,%1" : : "a" (val), "dN" (port));
@@ -27,16 +26,14 @@ uint16 inw(uint16 port)
 
 void buzywait(uint32 time)
 {
-    int i;
-    for(i=0; i<10000000*time; i++)
-        ;
+    // Implement a more efficient waiting mechanism
+    for (volatile uint32 i = 0; i < time * 1000; i++);
 }
 
 void sleep(uint32 time)
 {
-    int i;
-    for(i=0; i<10000000*time; i++)
-        ;
+    // Implement a more efficient waiting mechanism
+    for (volatile uint32 i = 0; i < time * 1000; i++);
 }
 
 void memset(uint32 *dest, int val, uint32 size)
