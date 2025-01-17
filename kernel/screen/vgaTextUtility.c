@@ -52,6 +52,21 @@ void clear() {
     return;
 }
 
+void set_cursor_position(unsigned int x, unsigned int y) {
+    xPos = x;
+    yPos = y;
+    // Update the cursor position in the VGA buffer
+    // Implementation depends on the specific VGA mode being used
+}
+
+void show_cursor() {
+    // Code to make the cursor visible
+}
+
+void hide_cursor() {
+    // Code to hide the cursor
+}
+
 void printlnVGA(unsigned char *msg) {
     unsigned int i = 0;
 

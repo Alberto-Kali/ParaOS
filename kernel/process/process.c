@@ -1,5 +1,6 @@
 #include "process.h"
 #include "terminal.h"
+#include "vgaTextUtility.h"
 
 static int next_pid = 0;
 struct pv_process procs[max_procs]; 
@@ -50,49 +51,56 @@ running_proc_list create_process(void (*code)(char), char *args) {
     return *pr; 
 }
 
-//Returned the interrupted or recently created process with the highest priority (i.e. that has waited for the most time), or 0x0 if no queued process found
-struct running_proc_list * queued_processes(){
-    if(cpr == 0x0) 
+// Function to handle process completion
+void complete_process(struct running_proc_list *proc) {
+    // Perform cleanup or finalization for the completed process
+    // Free memory or resources associated with the process
+    --running_procs; // Decrement the count of running processes
+    print_msg("kernel~>");
+}
+
+// Returned the interrupted or recently created process with the highest priority (i.e. that has waited for the most time), or 0x0 if no queued process found
+struct running_proc_list * queued_processes() {
+    __asm__ volatile ("cli"); // Disable interrupts
+    if (cpr == 0x0) 
         return 0x0;
 
-    struct running_proc_list *temp = &(*cpr); //Keeps the original address even if cpr ends up pointing to something else. TODO: Check if &(**pointer) actually does that.
-    while(temp->previous != 0x0){
-        temp = temp->previous; //leading to the very first process in the chain
+    struct running_proc_list *temp = &(*cpr); // Keeps the original address even if cpr ends up pointing to something else
+    while (temp->previous != 0x0) {
+        temp = temp->previous; // leading to the very first process in the chain
     }
-    struct running_proc_list *return_me = 0x0; //to be returned
+    struct running_proc_list *return_me = 0x0; // to be returned
 
-//TODO: make sure interrupts are disabled here. 
-    while(temp != 0x0){
-        if(temp->process->status == WAITING || temp->process->status == READY){
-            if(return_me != 0x0){
-                if(temp->process->prio > return_me->process->prio){
-                    ++(return_me->process->prio); //increase the prio of the rejected process, before rejecting it.
+    while (temp != 0x0) {
+        if (temp->process->status == WAITING || temp->process->status == READY) {
+            if (return_me != 0x0) {
+                if (temp->process->prio > return_me->process->prio) {
+                    ++(return_me->process->prio); // increase the prio of the rejected process, before rejecting it.
                     return_me = &(*temp);  
                 }
-            }else{
+            } else {
                 return_me = &(*temp);
             }
         }
         temp = temp->next;
     }
 
+    __asm__ volatile ("sti"); // Re-enable interrupts
     return return_me;
 }
 
-void force_task_switch(){
+void force_task_switch() {
     struct running_proc_list *interrupted_proc = &(*cpr);
-     struct running_proc_list *que = (struct running_proc_list *)queued_processes(); // first entry
+    struct running_proc_list *que = (struct running_proc_list *)queued_processes(); // first entry
 
-    if(que == 0x0){
-         outb(0x20, 0x20); //reenable interrupts
-         //printchar('.');
-         return;
+    if (que == 0x0) {
+        outb(0x20, 0x20); // reenable interrupts
+        return;
     }
 
-    __asm__ volatile ("cli"); //run_until_end_or_task_switch() reenables interrupts again when needed.
-    if(interrupted_proc->process->status == RUNNING){ 
+    __asm__ volatile ("cli"); // run_until_end_or_task_switch() reenables interrupts again when needed.
+    if (interrupted_proc->process->status == RUNNING) { 
         interrupted_proc->process->status = WAITING; 
-       // printlnVGA("waits");
     }
     cpr = que;
     run_until_end_or_task_switch(que, 0);
@@ -102,52 +110,42 @@ void force_task_switch(){
     return;
 }
 
+void run_until_end_or_task_switch(struct running_proc_list *proc, int pos) {
+    running_proc_list prev_proc;
 
+    proc->process->status = RUNNING;
 
-void run_until_end_or_task_switch(struct running_proc_list *proc,  int pos){
-        running_proc_list prev_proc;
+    typedef void* function(char *args);
+    typedef void* noargsfun();
 
-        //printlnVGA("runs");
+    outb(0x20, 0x20); // reenable interrupts
 
-        proc->process->status = RUNNING;
+    __asm__ __volatile__("sti\n\t"); // CLIed in force_task_switch() before calling
+    if (proc->process->args == 0x0) {
+        noargsfun* fun = (void *) proc->process->text_address; // This jumps to the beginning of the interrupted code. 
+        fun();
+    } else {
+        function* fun = (void *) proc->process->text_address;
+        fun(proc->process->args);
+    }
 
-        typedef void* function(char *args);
-        typedef void* noargsfun();
+    __asm__ __volatile__("cli\n\t"); // Will STI in force_task_switch() after returning
+    proc->process->status = COMPLETED;
+    complete_process(proc); // Call the completion function
 
-            //TODO: ADD LOW LEVEL HANDLING HERE
-        outb(0x20, 0x20); //reenable interrupts
+    // Process list cleanup
+    if (proc->previous != 0x0) {
+        proc->previous->next = proc->next;
+    }
+    if (proc->next != 0x0) {
+        proc->next->previous = proc->previous;
+    }
 
-            //TODO: add low level code that jumps to the interrupted process, at the same eip as when interrupted.
-
-        __asm__ __volatile__("sti\n\t"); //CLIed in force_task_switch() before calling
-        if(proc->process->args == 0x0){
-            noargsfun* fun = (void *) proc->process->text_address; //This jumps to the beginning of the interrupted code. 
-            fun();
-        }else{
-            function* fun = (void *) proc->process->text_address;
-            fun(proc->process->args);
-        }
-        //printlnVGA("returned");
-
-        __asm__ __volatile__("cli\n\t"); // Will STI in force_task_switch() after returning
-        proc->process->status = COMPLETED;
-        proc->process->prio = -1;
-
-    /* TODO: process list cleanup by reenabling this.
-       if(proc->previous != 0x0){
-            proc->previous->next = proc->next;
-        }
-        if(proc->next != 0x0){
-            proc->next->previous = proc->previous;
-        }
-    */
-        //TODO memory deallocation osv
-
-
-        --running_procs;
+    // Free memory allocated for the process
+    //free(proc->process);
+    //free(proc);  #NOT WORKING BCS WE IN KERNEL MODE
 
     return;
-
 }
 
 void proc_init() {
@@ -155,21 +153,10 @@ void proc_init() {
 
     cpr = 0x0;
     void (*r_input)(char) = receive_input;
-    //void (*dmp)(char) = charprint;
-    //void (*smp)(char) = sample_command;
-
 
     foreground_process = r_input;
-
-    //running_proc_list proc2 = create_process(dmp, 0x0);
-    //first_proc = &proc2; // Set the first process
-
-    //running_proc_list proc3 = create_process(smp, 0x0);
-    //proc3.process->prio = 100;
-    //proc2.process->prio = 10;
 
     __asm__ volatile ("sti");
 
     start_terminal_proc();
 }
-

@@ -83,11 +83,19 @@ void find_and_create_process(unsigned char *inserted_chars) {
     }
     if (inexistent_command != 0) { // the loop has checked all commands and they are nothing like the one given.
         printlnVGA("Command not found.");
+        print_msg("kernel~>");
     }
     return;
 }
 
 void receive_input(char ch) {
+    if (ch == 3) { // Ctrl+C
+        // Handle interrupt
+        printlnVGA("Process interrupted.");
+        print_msg("kernel~>");
+        return; // Exit the function to stop processing
+    }
+
     if (ch != '\n' && ch != 24) { // newline or up
         terminal_char_append(command, ch);
         printchar(ch);
@@ -100,6 +108,9 @@ void receive_input(char ch) {
         clear_char_array(command);
         clear_char_array(args);
         __asm__ __volatile__("sti\n\t");
+        
+        // Display prompt for the next input after command execution
+        //print_msg(">");
     }
 }
 
@@ -129,11 +140,11 @@ void start_terminal_independently() {
     void (*r_input)(char) = receive_input; // function pointer
     foreground_process = (int)r_input;
     printlnVGA("Started terminal!");
-    printchar('>');
+    print_msg("kernel~>");
 }
 
 void start_terminal_proc() {
     register_commands();
     printlnVGA("Started terminal!");
-    printchar('>');
+    print_msg("kernel~>");
 }
